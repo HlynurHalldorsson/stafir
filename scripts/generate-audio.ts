@@ -1,11 +1,27 @@
 /**
- * Generates Icelandic TTS audio files using OpenAI tts-1-hd.
+ * Generates Icelandic TTS audio using OpenAI gpt-4o-mini-tts.
+ * Uses the `instructions` field to force Icelandic pronunciation.
+ * Letter audio uses the actual Icelandic letter names (e.g. "bé" for B)
+ * so the model never mistakes them for English letters.
+ *
  * Run: OPENAI_API_KEY=sk-... npx tsx scripts/generate-audio.ts
  */
 
 import OpenAI from 'openai'
 import { writeFileSync, mkdirSync } from 'fs'
 import { join } from 'path'
+
+// Icelandic names for each letter of the alphabet.
+// Passing these instead of bare "A", "B" etc. prevents English pronunciation.
+const letterNames: Record<string, string> = {
+  A: 'a',   Á: 'á',   B: 'bé',   D: 'dé',   Ð: 'eð',
+  E: 'e',   É: 'é',   F: 'eff',  G: 'gé',   H: 'há',
+  I: 'i',   Í: 'í',   J: 'joð',  K: 'ká',   L: 'ell',
+  M: 'emm', N: 'enn', O: 'o',    Ó: 'ó',    P: 'pé',
+  R: 'err', S: 'ess', T: 'té',   U: 'u',    Ú: 'ú',
+  V: 'vaff',X: 'ex',  Y: 'y',    Ý: 'ý',    Þ: 'þorn',
+  Æ: 'æ',   Ö: 'ö',
+}
 
 const letters = [
   { letter: 'A',  word: 'Appelsína'   },
@@ -57,6 +73,13 @@ function slug(text: string): string {
     .replace(/ö/g,'o3').replace(/[^a-z0-9]/g,'')
 }
 
+const INSTRUCTIONS =
+  'Þú ert að tala íslensku við fimm ára barn. ' +
+  'Talaðu skýrt og hægt á hreinni íslensku. ' +
+  'Ekki tala ensku.'
+// Translation: "You are speaking Icelandic to a five-year-old child.
+//  Speak clearly and slowly in pure Icelandic. Do not speak English."
+
 async function main() {
   const apiKey = process.env.OPENAI_API_KEY
   if (!apiKey) { console.error('Set OPENAI_API_KEY first'); process.exit(1) }
@@ -68,8 +91,10 @@ async function main() {
   const tasks: { file: string; text: string }[] = []
 
   for (const { letter, word } of letters) {
-    tasks.push({ file: `letter-${slug(letter)}.mp3`, text: letter })
-    tasks.push({ file: `word-${slug(word)}.mp3`,     text: word   })
+    // Use the Icelandic letter name so the model doesn't anglicise it
+    const spokenLetter = letterNames[letter] ?? letter
+    tasks.push({ file: `letter-${slug(letter)}.mp3`, text: spokenLetter })
+    tasks.push({ file: `word-${slug(word)}.mp3`,     text: word })
   }
   for (const word of wordList) {
     const file = `word-${slug(word)}.mp3`
@@ -79,24 +104,27 @@ async function main() {
   }
 
   let done = 0
+  let failed = 0
   for (const { file, text } of tasks) {
-    process.stdout.write(`[${++done}/${tasks.length}] ${file} … `)
+    process.stdout.write(`[${++done}/${tasks.length}] ${file} "${text}" … `)
     try {
-      const response = await client.audio.speech.create({
-        model: 'tts-1-hd',
+      const response = await (client.audio.speech.create as Function)({
+        model: 'gpt-4o-mini-tts',
         voice: 'nova',
         input: text,
         speed: 0.85,
         response_format: 'mp3',
+        instructions: INSTRUCTIONS,
       })
       writeFileSync(join(outDir, file), Buffer.from(await response.arrayBuffer()))
       console.log('✓')
     } catch (err) {
       console.log('✗', (err as Error).message)
+      failed++
     }
   }
 
-  console.log(`\nDone! ${tasks.length} files written to public/audio/`)
+  console.log(`\nDone! ${tasks.length - failed}/${tasks.length} files written to public/audio/`)
 }
 
 main()
